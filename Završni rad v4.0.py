@@ -119,12 +119,9 @@ def scrape_and_download():
 # -----------------------------------------------------------------------------
 
 def napravi_kraticu(naziv):
-    """Od punog naziva kolegija radi kraticu (prva slova riječi)."""
-    # Razdvaja riječi i ignorira crtice (npr. Objektno-orijentirano -> O, O)
     rijeci = re.split(r'[\s\-]+', naziv)
     kratica = ""
     for r in rijeci:
-        # Traži prvo alfanumeričko slovo/broj u riječi
         m = re.search(r'[a-zA-ZčćžšđČĆŽŠĐ0-9]', r)
         if m:
             kratica += m.group().upper()
@@ -150,7 +147,6 @@ def pretvori_u_datetime(datum_str):
                 sada = datetime.now()
                 pocetak_akademske = sada.year if sada.month >= 8 else sada.year - 1
                 godina = pocetak_akademske if mjesec >= 8 else pocetak_akademske + 1
-
             return datetime(godina, mjesec, dan)
     except: return None
     return None
@@ -274,22 +270,31 @@ def ucitaj_podatke(pdf_putanje, cache_fajl=None):
 # UI/UX SUČELJE
 # -----------------------------------------------------------------------------
 def main():
-    # Renderiraj glavni naslov odmah
     st.title("📅 Pametni Ispitni Kalendar")
 
     st.sidebar.title("Postavke aplikacije")
     izvor_podataka = st.sidebar.radio("Odaberite izvor podataka:",["Službeni izvedbeni planovi FIDIT-a", "Moji PDF-ovi (Custom)"])
     
-    pdf_liste =[]
+    pdf_liste = ()
     cache_to_use = None
     podnaslov = ""
 
     if izvor_podataka == "Službeni izvedbeni planovi FIDIT-a":
         odabrani_studij = st.sidebar.selectbox("Razina i smjer studija:", list(SLUZBENI_PROGRAMI.keys()))
-        podnaslov = f"{odabrani_studij} Informatike FIDIT" # Dinamički naslov
+        podnaslov = f"{odabrani_studij} Informatike FIDIT"
         
         podaci = SLUZBENI_PROGRAMI[odabrani_studij]
         pdf_fajl = podaci["pdf"]
+        cache_to_use = podaci["cache"]
+        
+        # AUTOMATSKO PREUZIMANJE S WEBA AKO SERVER NEMA DOKUMENTE (Na cloud deploymentu)
+        if not os.path.exists(pdf_fajl) and not os.path.exists(cache_to_use):
+            st.toast("Pripremam podatke na poslužitelju...", icon="📥")
+            with st.spinner(f"Automatsko preuzimanje dokumenata s weba (Prvo pokretanje)..."):
+                uspjeh = scrape_and_download()
+                if not uspjeh or not os.path.exists(pdf_fajl):
+                    st.error("Nije moguće preuzeti izvedbene planove. Provjerite vezu ili pokušajte kasnije.")
+                    st.stop()
         
         with st.sidebar.expander("🛠️ Admin / Ažuriranje podataka"):
             st.write("Klikom na gumb ažurirat će se svi službeni PDF-ovi izravno sa stranice fakulteta.")
@@ -301,15 +306,14 @@ def main():
                 else:
                     st.warning("Ažuriranje djelomično ili potpuno neuspješno. Provjerite greške iznad.")
 
-        if not os.path.exists(pdf_fajl):
-            st.warning(f"PDF dokument za '{odabrani_studij}' još nije preuzet. Otvorite 'Admin / Ažuriranje podataka' u traci lijevo i pritisnite 'Osvježi podatke s weba' da ga preuzmete.")
+        if not os.path.exists(pdf_fajl) and not os.path.exists(cache_to_use):
+            st.error("Greška: Niti postoji PDF niti Cache za ovaj program. Molim vas ažurirajte podatke u Admin panelu.")
             st.stop()
-        else:
-            pdf_liste =[pdf_fajl]
-            cache_to_use = podaci["cache"]
+            
+        pdf_liste = (pdf_fajl,) # Korištenje TUPLE-a popravlja problem sa Streamlit memorijom!
 
     else:
-        podnaslov = "Vlastiti izvedbeni planovi (Custom)" # Dinamički naslov
+        podnaslov = "Vlastiti izvedbeni planovi (Custom)"
         
         st.sidebar.markdown("---")
         st.sidebar.info("Ovdje možete ubaciti jedan ili više izvedbenih planova. Sustav će ih spojiti u jedan raspored.")
@@ -323,19 +327,20 @@ def main():
         temp_dir = "temp_uploads"
         os.makedirs(temp_dir, exist_ok=True)
         
+        temp_paths =[]
         for f in uploaded_files:
             file_path = os.path.join(temp_dir, f.name)
             with open(file_path, "wb") as tmp:
                 tmp.write(f.getvalue())
-            pdf_liste.append(file_path)
+            temp_paths.append(file_path)
             
+        pdf_liste = tuple(temp_paths)
         cache_to_use = None 
 
-    # Renderiranje podnaslova na temelju onog iz sidebara
     st.markdown(f"##### {podnaslov}")
 
     # Učitavanje podataka
-    with st.spinner("Očitavam podatke iz PDF-a (Može potrajati par minuta)..." if not cache_to_use or not os.path.exists(cache_to_use) else "Učitavam podatke iz memorije..."):
+    with st.spinner("Očitavam podatke (Može potrajati par minuta ako server nema Cache)..." if not cache_to_use or not os.path.exists(cache_to_use) else "Učitavam podatke iz memorije..."):
         svi_ispiti, svi_predmeti = ucitaj_podatke(pdf_liste, cache_to_use)
 
     if not svi_predmeti:
@@ -365,12 +370,10 @@ def main():
     
     st.divider()
     
-    # POSTAVKE PRIKAZA NAZIVA KOLEGIJA
     st.markdown("### ⚙️ Postavke prikaza")
-    prikaz_kolegija = st.radio("Format naziva kolegija u kalendaru:",["Puno ime", "Kratica", "Kratica + Puno ime"], 
-                               horizontal=True)
+    prikaz_kolegija = st.radio("Format naziva kolegija u kalendaru:",["Puno ime", "Kratica", "Kratica + Puno ime"], horizontal=True)
 
-    st.markdown("<br>", unsafe_allow_html=True) # Mali razmak radi vizualnog dojma
+    st.markdown("<br>", unsafe_allow_html=True)
 
     if "prikazi_raspored" not in st.session_state:
         st.session_state.prikazi_raspored = False
@@ -387,11 +390,10 @@ def main():
         
         st.markdown("## 🗓️ Vaš Raspored")
         
-        # Prilagodba imena (mapiranje) na osnovu korisničkog odabira za prikaz kolegija
         filtrirani =[]
         for x in svi_ispiti:
             if x['kolegij'] in odabrani_kolegiji:
-                novi_x = dict(x) # Radimo kopiju da ne prepišemo originalni rječnik
+                novi_x = dict(x) 
                 
                 if prikaz_kolegija == "Kratica":
                     novi_x['kolegij'] = napravi_kraticu(novi_x['kolegij'])
@@ -414,7 +416,6 @@ def main():
             st.markdown("### 📥 Izvoz podataka", unsafe_allow_html=True)
             txt_content = f"MOJ KALENDAR OBAVEZA\n{'='*80}\n"
             for x in filtrirani:
-                # Dinamično formatiranje paddinga (.txt format) kako bi stupci izgledali lijepo čak i sa kraticama
                 sirina_kolegija = 35 if prikaz_kolegija == "Puno ime" else (10 if prikaz_kolegija == "Kratica" else 45)
                 txt_content += f"{x['datum_prikaz']:<15} | {x['kolegij']:<{sirina_kolegija}} | {x['aktivnost']}\n"
             
