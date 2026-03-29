@@ -1,0 +1,8 @@
+streamlit
+camelot-py[cv]
+opencv-python-headless
+pandas
+requests
+beautifulsoup4
+pypdf
+PyPDF2
