@@ -17,9 +17,42 @@ st.set_page_config(page_title="Ispitni Kalendar PDS/DS", page_icon="📅", layou
 
 st.markdown("""
     <style>
+    .block-container {
+        padding-top: 3rem !important;
+    }
+
     .stMultiSelect[data-baseweb="tag"] { background-color: #007bff !important; color: white !important; }
     .semester-header { color: #1f4e79; border-bottom: 2px solid #dee2e6; padding-bottom: 5px; margin-top: 20px; }
     div[st-decorator="true"] { display:none; }
+    
+    .developer-footer {
+        text-align: center;
+        color: #888888;
+        font-size: 13px;
+        margin-top: 40px;
+        padding-top: 15px;
+        border-top: 1px solid #e6e6e6;
+    }
+    .developer-footer a {
+        color: #888888;
+        text-decoration: none;
+        font-weight: 600;
+        transition: color 0.2s ease-in-out;
+    }
+    .developer-footer a:hover {
+        color: #007bff;
+        text-decoration: none;
+    }
+    
+    .gradient-subtitle {
+        font-size: 32px;
+        font-weight: 700;
+        background: linear-gradient(90deg, #1f4e79, #007bff, #00d2ff);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        margin-top: -10px;
+        margin-bottom: 25px;
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -55,7 +88,7 @@ KATEGORIJE = {
 }
 
 # -----------------------------------------------------------------------------
-# WEB SCRAPER LOGIKA (Sada s pametnom provjerom)
+# WEB SCRAPER LOGIKA
 # -----------------------------------------------------------------------------
 def scrape_and_download():
     url = "https://www.inf.uniri.hr/nastava/izvedbeni-planovi"
@@ -68,7 +101,7 @@ def scrape_and_download():
         soup = BeautifulSoup(r.content, 'html.parser')
         
         pronadjeno = 0
-        bilo_promjena = False  # Prati jesmo li zaista skinuli NOVU datoteku
+        bilo_promjena = False  
         
         for a in soup.find_all('a'):
             href = a.get('href')
@@ -82,7 +115,7 @@ def scrape_and_download():
                 prog_key = "Prijediplomski studij"
             elif "diplomskog" in tekst_linka:
                 if "paket" in tekst_linka:
-                    continue  # Nastavnički paket u potpunosti ignoriramo
+                    continue  
                 elif "nastavnički" in tekst_linka or "nastavnicki" in tekst_linka:
                     prog_key = "Diplomski studij (Nastavnički)"
                 else:
@@ -93,25 +126,23 @@ def scrape_and_download():
                 try:
                     pdf_data = requests.get(puni_pdf_link, headers=headers, timeout=15).content
                 except Exception:
-                    continue # Ako pojedinačni PDF pukne, idi na sljedeći
+                    continue 
                 
                 naziv_datoteke = SLUZBENI_PROGRAMI[prog_key]["pdf"]
                 cache_file = SLUZBENI_PROGRAMI[prog_key]["cache"]
                 
-                # PAMETNA PROVJERA (Je li fajl identičan?)
                 treba_spremiti = True
                 if os.path.exists(naziv_datoteke):
                     with open(naziv_datoteke, 'rb') as f:
                         stari_pdf = f.read()
                     if stari_pdf == pdf_data:
-                        treba_spremiti = False # Fajl je potpuno isti, ne diraj Cache!
+                        treba_spremiti = False 
                 
                 if treba_spremiti:
                     try:
                         with open(naziv_datoteke, 'wb') as f:
                             f.write(pdf_data)
                         
-                        # Budući da je novi fajl drugačiji, brišemo stari raspored (Cache)
                         if os.path.exists(cache_file):
                             os.remove(cache_file)
                             
@@ -122,7 +153,6 @@ def scrape_and_download():
                 
                 pronadjeno += 1
 
-        # Očisti Streamlitovu in-memory tablicu samo ako se dogodila stvarna promjena
         if bilo_promjena:
             st.cache_data.clear()
             
@@ -172,22 +202,19 @@ def pretvori_u_datetime(datum_str):
 def ucitaj_podatke(pdf_putanje, cache_fajl=None):
     tablice_dfs = None
     
-    # 1. Sigurno učitavanje cache datoteke (uz zaštitu od korupcije fajla)
     if cache_fajl and os.path.exists(cache_fajl):
         try:
             with open(cache_fajl, "rb") as f: 
                 tablice_dfs = pickle.load(f)
         except Exception:
-            # Ako je .pkl datoteka oštećena, namjerno je bacamo i forsiramo ponovno parsiranje
             tablice_dfs = None 
             st.warning("⚠️ Priručna memorija (cache) je oštećena. Pokrećem automatsko generiranje nove...")
 
-    # 2. Parsiranje pomoću Camelota (ako cache ne postoji ili je pao na provjeri)
     if tablice_dfs is None:
         tablice_dfs =[]
         for doc_putanja in pdf_putanje:
             if not os.path.exists(doc_putanja):
-                continue # Ako PDF fizički ne postoji, preskoči ga da spriječimo rušenje
+                continue 
                 
             try:
                 ukupno_stranica = None
@@ -222,14 +249,12 @@ def ucitaj_podatke(pdf_putanje, cache_fajl=None):
             except Exception as e:
                 st.warning(f"Problem sa čitanjem dokumenta {doc_putanja}: {e}")
                 
-        # 3. Spremanje svježeg cache-a
         if cache_fajl and tablice_dfs:
             try:
                 with open(cache_fajl, "wb") as f: 
                     pickle.dump(tablice_dfs, f)
             except Exception: pass
             
-    # OBRADA PODATAKA
     naziv_datumi_dict, naziv_semestar_dict = {}, {} 
     i = 0
     while i < len(tablice_dfs):
@@ -321,7 +346,6 @@ def main():
         pdf_fajl = podaci["pdf"]
         cache_to_use = podaci["cache"]
         
-        # AUTOMATSKO PREUZIMANJE S WEBA
         if not os.path.exists(pdf_fajl) and not os.path.exists(cache_to_use):
             st.toast("Pripremam podatke na poslužitelju...", icon="📥")
             with st.spinner(f"Automatsko preuzimanje dokumenata s weba (Prvo pokretanje)..."):
@@ -330,18 +354,20 @@ def main():
                     st.error("Nije moguće preuzeti izvedbene planove. Provjerite vezu ili pokušajte kasnije.")
                     st.stop()
         
-        with st.sidebar.expander("🛠️ Admin / Ažuriranje podataka"):
-            st.write("Klikom na gumb ažurirat će se svi službeni PDF-ovi izravno sa stranice fakulteta.")
-            if st.button("⬇️ Osvježi podatke s weba", width="stretch"):
-                with st.spinner("Provjeravam i preuzimam datoteke s weba... To može potrajati par sekundi."):
-                    uspjeh = scrape_and_download()
-                if uspjeh:
-                    st.success("✅ Datoteke provjerene i ažurirane! Spremno za prikaz.")
-                else:
-                    st.warning("Ažuriranje djelomično ili potpuno neuspješno. Provjerite greške iznad.")
+        # SAKRIVENI ADMIN PANEL (Vidljiv samo ako URL sadrži ?admin=mihael)
+        if st.query_params.get("admin") == "mihael":
+            with st.sidebar.expander("🛠️ Admin / Ažuriranje podataka", expanded=True):
+                st.write("Klikom na gumb ažurirat će se svi službeni PDF-ovi izravno sa stranice fakulteta.")
+                if st.button("⬇️ Osvježi podatke s weba", width="stretch"):
+                    with st.spinner("Provjeravam i preuzimam datoteke s weba... To može potrajati par sekundi."):
+                        uspjeh = scrape_and_download()
+                    if uspjeh:
+                        st.success("✅ Datoteke provjerene i ažurirane! Spremno za prikaz.")
+                    else:
+                        st.warning("Nije pronađena nova verzija dokumenata.")
 
         if not os.path.exists(pdf_fajl) and not os.path.exists(cache_to_use):
-            st.error("Greška: Niti postoji PDF niti Cache za ovaj program. Molim vas ažurirajte podatke u Admin panelu.")
+            st.error("Greška: Niti postoji PDF niti Cache za ovaj program. Molim vas obratite se administratoru.")
             st.stop()
             
         pdf_liste = (pdf_fajl,)
@@ -371,7 +397,7 @@ def main():
         pdf_liste = tuple(temp_paths)
         cache_to_use = None 
 
-    st.markdown(f"##### {podnaslov}")
+    st.markdown(f"<div class='gradient-subtitle'>{podnaslov}</div>", unsafe_allow_html=True)
 
     # Učitavanje podataka
     with st.spinner("Očitavam podatke (Može potrajati par minuta ako poslužitelj nema preuzeti Cache)..." if not cache_to_use or not os.path.exists(cache_to_use) else "Učitavam podatke iz memorije..."):
@@ -456,6 +482,15 @@ def main():
             st.download_button("📥 Preuzmi .txt raspored", txt_content, "moj_kalendar.txt", width="stretch")
         else:
             st.warning("Za odabrane kolegije nema zapisanih obaveza u bazi.")
+
+    st.sidebar.markdown(
+        """
+        <div class="developer-footer">
+            Razvio <a href="https://github.com/MihaelHerenda" target="_blank">Mihael Herenda</a>
+        </div>
+        """, 
+        unsafe_allow_html=True
+    )
 
 if __name__ == "__main__":
     main()
