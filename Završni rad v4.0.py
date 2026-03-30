@@ -1,7 +1,7 @@
 import camelot
 import re
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 import pickle
 import os
 import streamlit as st
@@ -120,7 +120,7 @@ def scrape_and_download():
                     prog_key = "Diplomski studij (Nastavnički)"
                 else:
                     prog_key = "Diplomski studij (Opći)"
-            
+
             if prog_key:
                 puni_pdf_link = urljoin(baza_url, href)
                 try:
@@ -325,6 +325,56 @@ def ucitaj_podatke(pdf_putanje, cache_fajl=None):
                     break 
     return sorted(svi_ispiti, key=lambda x: x['datum_obj']), naziv_semestar_dict
 
+def sort_key_semestar(sem_naziv):
+    # POPRAVLJENO: Robustnije sortiranje semestara
+    match = re.match(r"(\d+)\. Semestar", sem_naziv)
+    if match:
+        return (0, int(match.group(1))) # Prioritet za ciste brojeve semestara
+    return (1, sem_naziv) # Ostalo (npr. akademske godine) ide iza
+
+def generiraj_ics_sadrzaj(filtrirani_ispiti):
+    """Generira sadržaj iCalendar (.ics) datoteke."""
+    ics_content = "BEGIN:VCALENDAR\n"
+    ics_content += "VERSION:2.0\n"
+    ics_content += "PRODID:-//Fakultet//IspitniKalendar//EN\n"
+    
+    for i, ispit in enumerate(filtrirani_ispiti):
+        ics_content += "BEGIN:VEVENT\n"
+        
+        # SUMMARY: Naslov događaja (Kolegij + Aktivnost)
+        summary = f"{ispit['kolegij']}: {ispit['aktivnost']}"
+        ics_content += f"SUMMARY:{summary}\n"
+        
+        # UID: Jedinstveni identifikator
+        ics_content += f"UID:{datetime.now().strftime('%Y%m%d%H%M%S%f')}-{i}@fidit.hr\n"
+        
+        # DTSTAMP: Vrijeme kreiranja događaja
+        ics_content += f"DTSTAMP:{datetime.now().strftime('%Y%m%dT%H%M%S')}\n"
+        
+        # DTSTART / DTEND: Početak i kraj (Koristimo samo datum, vrijeme 9:00 do 10:00 za jedan sat)
+        datum_obj = ispit['datum_obj']
+        
+        # Pojednostavljeno: Danas u 9:00 do 10:00 (bez vremenske zone, za lokalni unos u kalendaru)
+        if datum_obj and datum_obj.year != 2099:
+            start_dt = datum_obj.replace(hour=9, minute=0, second=0, microsecond=0)
+            end_dt = datum_obj.replace(hour=10, minute=0, second=0, microsecond=0)
+            
+            ics_content += f"DTSTART:{start_dt.strftime('%Y%m%dT%H%M%S')}\n"
+            ics_content += f"DTEND:{end_dt.strftime('%Y%m%dT%H%M%S')}\n"
+        else:
+             # Preskoči događaj koji nema ispravan datum
+             ics_content += "END:VEVENT\n"
+             continue
+
+        # DESCRIPTION: Dodatni opis
+        description = f"Semestar: {ispit['semestar']}\nDetalji: {ispit['aktivnost']}"
+        ics_content += f"DESCRIPTION:{description.replace(':', '\\:').replace(',', '\\,')}\n"
+        
+        ics_content += "END:VEVENT\n"
+        
+    ics_content += "END:VCALENDAR\n"
+    return ics_content
+
 # -----------------------------------------------------------------------------
 # UI/UX SUČELJE
 # -----------------------------------------------------------------------------
@@ -354,7 +404,7 @@ def main():
                     st.error("Nije moguće preuzeti izvedbene planove. Provjerite vezu ili pokušajte kasnije.")
                     st.stop()
         
-        # SAKRIVENI ADMIN PANEL (Vidljiv samo ako URL sadrži ?admin=mihael)
+        # SAKRIVENI ADMIN PANEL (Vidljiv samo ako URL sadrži ?admin=mihael, da korisnici ne bi stalno osvježavali podatke bez razloga)
         if st.query_params.get("admin") == "mihael":
             with st.sidebar.expander("🛠️ Admin / Ažuriranje podataka", expanded=True):
                 st.write("Klikom na gumb ažurirat će se svi službeni PDF-ovi izravno sa stranice fakulteta.")
@@ -415,7 +465,8 @@ def main():
     # GLAVNI DIO 
     st.markdown("### 🎯 Odabir Predmeta")
     odabrani_kolegiji =[]
-    sortirani_semestri = sorted(semestri_mape.keys(), key=lambda x: x if not x[0].isdigit() else f"{int(x.split('.')[0]):02d}")
+    # KORIŠTENJE NOVE FUNKCIJE ZA SORTIRANJE
+    sortirani_semestri = sorted(semestri_mape.keys(), key=sort_key_semestar)
     
     for sem_naziv in sortirani_semestri:
         st.markdown(f"<h4 class='semester-header'>{sem_naziv}</h4>", unsafe_allow_html=True)
@@ -474,12 +525,28 @@ def main():
             st.dataframe(df_final, width="stretch", hide_index=True)
 
             st.markdown("### 📥 Izvoz podataka", unsafe_allow_html=True)
+            
+            # --- TXT IZVOZ (POSTOJEĆI) ---
             txt_content = f"MOJ KALENDAR OBAVEZA\n{'='*80}\n"
             for x in filtrirani:
                 sirina_kolegija = 35 if prikaz_kolegija == "Puno ime" else (10 if prikaz_kolegija == "Kratica" else 45)
                 txt_content += f"{x['datum_prikaz']:<15} | {x['kolegij']:<{sirina_kolegija}} | {x['aktivnost']}\n"
             
-            st.download_button("📥 Preuzmi .txt raspored", txt_content, "moj_kalendar.txt", width="stretch")
+            # --- ICS IZVOZ (NOVO) ---
+            col_txt, col_ics = st.columns(2)
+            with col_txt:
+                st.download_button("📥 Preuzmi .txt raspored", txt_content, "moj_kalendar.txt", width="stretch")
+
+            with col_ics:
+                ics_content = generiraj_ics_sadrzaj(filtrirani)
+                st.download_button(
+                    "🗓️ Preuzmi .ics za Google Kalendar", 
+                    ics_content, 
+                    "moj_kalendar.ics", 
+                    "text/calendar", # MIME tip za ICS datoteke
+                    width="stretch"
+                )
+            
         else:
             st.warning("Za odabrane kolegije nema zapisanih obaveza u bazi.")
 
